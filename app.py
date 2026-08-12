@@ -1,6 +1,13 @@
 import streamlit as st
-import requests
+import os
+import shutil
 import json
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_groq import ChatGroq
+from langchain_core.prompts import PromptTemplate
 
 # Set the page layout
 st.set_page_config(page_title="Catalogic AI", layout="centered")
@@ -9,41 +16,73 @@ st.title("🏭 Catalogic AI Dashboard")
 st.subheader("B2B Product Intelligence Extractor")
 st.markdown("Upload a raw manufacturer datasheet to automatically extract structured B2B attributes.")
 
-# Create the UI layout
 st.divider()
 uploaded_file = st.file_uploader("1. Upload Technical Manual (PDF)", type=["pdf"])
 part_number = st.text_input("2. Enter Target Part Number / Product Name")
 
 if st.button("Generate Product Intelligence", type="primary"):
     if uploaded_file and part_number:
-        with st.spinner("AI Pipeline Active: Reading vectors and extracting specs..."):
+        with st.spinner("AI Pipeline Active: Processing vectors and extracting specs..."):
             
-            # Package the file and text to send to your FastAPI backend
-            files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
-            data = {"part_number": part_number}
+            # 1. Save uploaded file to a temporary location
+            temp_file_path = f"temp_{uploaded_file.name}"
+            with open(temp_file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
             
             try:
-                # Call your local backend
-                response = requests.post("http://127.0.0.1:8000/extract-specs/", files=files, data=data)
+                # 2. Extract and split text
+                loader = PyPDFLoader(temp_file_path)
+                docs = loader.load()
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                chunks = text_splitter.split_documents(docs)
+
+                # 3. Create vector embeddings
+                embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+                vectorstore = Chroma.from_documents(chunks, embeddings)
+
+                # 4. Retrieve context
+                retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+                relevant_docs = retriever.invoke(part_number)
+                context = "\n\n".join([doc.page_content for doc in relevant_docs])
+
+                # 5. Run LLM Engine via Groq
+                # HARDCODED KEY WARNING: Replace the placeholder below with your actual Groq key string
+                llm = ChatGroq(
+                    temperature=0, 
+                    model_name="llama-3.1-8b-instant", 
+                    api_key="YOUR_GROQ_API_KEY_HERE"
+                )
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    st.success("Extraction Complete! Confidence Score: High")
+                prompt = PromptTemplate.from_template(
+                    """You are an expert industrial engineer. Look at the following technical manual context and extract the specifications for Part Number: {part_number}.
                     
-                    # Parse the stringified JSON from the LLM back into a real dictionary
-                    try:
-                        raw_ai_dict = json.loads(result["raw_ai_output"])
-                    except:
-                        raw_ai_dict = {"raw_text": result["raw_ai_output"]} # Fallback if LLM didn't format perfectly
+                    Context from manual:
+                    {context}
                     
-                    # Display the data in a beautiful table/JSON view
+                    Return ONLY a valid JSON object containing attributes like Material, Dimensions, Weight, and Voltage if they exist in the text. If you can't find them, put "Not specified".
+                    """
+                )
+                
+                chain = prompt | llm
+                response = chain.invoke({"part_number": part_number, "context": context})
+                
+                st.success("Extraction Complete! Confidence Score: High")
+                
+                # Parse and display final output
+                try:
+                    raw_ai_dict = json.loads(response.content)
                     st.subheader("Structured B2B Attributes")
                     st.json(raw_ai_dict)
+                except Exception:
+                    st.subheader("Extracted Output")
+                    st.text(response.content)
                     
-                else:
-                    st.error(f"Backend Server Error: {response.status_code}")
-                    
-            except requests.exceptions.ConnectionError:
-                st.error("Could not connect to backend. Is your FastAPI server running on port 8000?")
+            except Exception as e:
+                st.error(f"An error occurred during processing: {str(e)}")
+                
+            finally:
+                # Clean up temporary file
+                if os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
     else:
         st.warning("Please upload a PDF and enter a part number to begin.")
