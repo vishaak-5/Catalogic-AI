@@ -70,7 +70,14 @@ if st.button("Generate Product Intelligence", type="primary"):
                 
                 # Parse and display final output
                 try:
-                    raw_ai_dict = json.loads(response.content)
+                    # Clean the output to extract just the JSON bracketed area
+                    ai_text = response.content
+                    if "```json" in ai_text:
+                        ai_text = ai_text.split("```json")[1].split("```")[0]
+                    elif "```" in ai_text:
+                        ai_text = ai_text.split("```")[1].split("```")[0]
+                        
+                    raw_ai_dict = json.loads(ai_text.strip())
                     st.subheader("Structured B2B Attributes")
                     st.json(raw_ai_dict)
                 except Exception:
