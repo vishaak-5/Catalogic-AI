@@ -50,7 +50,7 @@ if st.button("Generate Product Intelligence", type="primary"):
                 llm = ChatGroq(
                     temperature=0, 
                     model_name="llama-3.1-8b-instant", 
-                    api_key="YOUR_GROQ_API_KEY_HERE"
+                    api_key=st.secrets["GROQ_API_KEY"]  # <-- Change this exact line
                 )
                 
                 prompt = PromptTemplate.from_template(
