@@ -49,7 +49,7 @@ if st.button("Generate Product Intelligence", type="primary"):
                 # HARDCODED KEY WARNING: Replace the placeholder below with your actual Groq key string
                 llm = ChatGroq(
                     temperature=0, 
-                    model_name="llama-3.1-8b-instant", 
+                    model_name="openai/gpt-oss-20b", 
                     api_key=st.secrets["GROQ_API_KEY"]  # <-- Change this exact line
                 )
                 
